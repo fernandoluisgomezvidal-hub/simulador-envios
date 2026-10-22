@@ -31,7 +31,7 @@ function defaultState() {
     pack: { preset: 'm', l: 35, w: 25, h: 15, kg: 3 },
     content: 'ropa', letterContent: 'docs', value: 60,
     opts: { insure: false, insured: 150, ack: false, cod: false, codAmount: 50, pickup: false, saturday: false, box: 'none', delivery: 'domicilio' },
-    date: n.date, time: n.time, priority: 50, selected: null, tab: 'servicios', clickMode: 'dest'
+    date: n.date, time: n.time, priority: 50, selected: null, tab: 'servicios', clickMode: 'dest', places: {}
   };
 }
 function deepMerge(a, b) { for (const k in b) { if (b[k] && typeof b[k] === 'object' && !Array.isArray(b[k]) && a[k] && typeof a[k] === 'object') deepMerge(a[k], b[k]); else if (k in a) a[k] = b[k]; } return a; }
@@ -39,15 +39,16 @@ function loadState() {
   const st = defaultState();
   try {
     const m = location.hash.match(/s=([^&]+)/);
-    if (m) return sanitize(deepMerge(st, JSON.parse(decodeURIComponent(escape(atob(m[1]))))));
+    if (m) { const sh = JSON.parse(decodeURIComponent(escape(atob(m[1])))); deepMerge(st, sh); st.places = sh.places || {}; return sanitize(st); }
   } catch (e) { /* enlace inválido */ }
   try {
     const raw = localStorage.getItem('simEnvios.v1');
-    if (raw) { const saved = JSON.parse(raw); const n = nowParts(); deepMerge(st, saved); st.date = n.date; st.time = n.time; }
+    if (raw) { const saved = JSON.parse(raw); const n = nowParts(); deepMerge(st, saved); st.places = saved.places || {}; st.date = n.date; st.time = n.time; }
   } catch (e) { /* sin almacenamiento */ }
   return sanitize(st);
 }
 function sanitize(st) {
+  Object.values(st.places || {}).forEach(p => { if (p && p.id && p.lat != null) { ensureCountry(p.cc, p); registerPlace(p); } });
   if (!CITY[st.origin] || CITY[st.origin].cc !== 'ES') st.origin = 'es-madrid';
   if (!CITY[st.dest]) st.dest = 'fr-paris';
   if (!['carta', 'postal', 'paquete'].includes(st.cat)) st.cat = 'paquete';
@@ -65,43 +66,79 @@ const state = loadState();
 let sim = null;
 
 /* ---------------- Combos de ciudad ---------------- */
-function cityLabel(c) { return c.cc === 'ES' ? `${c.name}` : `${c.name}, ${COUNTRIES[c.cc].n}`; }
-function cityFlag(c) { return COUNTRIES[c.cc].f; }
+function cityLabel(c) { return (c.cc === 'ES' || !c.cc) ? `${c.name}` : `${c.name}, ${ensureCountry(c.cc, c).n}`; }
+function cityFlag(c) { return c.kind === 'sea' ? '🌊' : ensureCountry(c.cc, c).f; }
 function citySub(c) {
+  if (c.geo) return `${KIND_IC[c.kind] || '📍'} ${KIND_LABEL[c.kind] || 'Lugar'}${c.sub ? ' · ' + c.sub : ''}`;
   if (c.cc === 'ES') { const r = regionOf(c); return `${PROVINCES[c.prov]}${r !== 'PEN' ? ' · ' + { BAL: 'Baleares', CAN: 'Canarias', CEU: 'Ceuta', MEL: 'Melilla' }[r] : ''}`; }
   const C = COUNTRIES[c.cc]; return `${C.n} · Zona ${C.z}${C.eu ? ' · UE' : ''}`;
 }
 function makeCombo(rootSel, key, getList) {
   const root = $(rootSel), input = $('input', root), list = $('.combo-list', root);
-  let items = [], active = 0;
+  let items = [], active = 0, remote = [], lastQ = '', searching = false, ctrl = null, tmr = null;
   const show = () => { input.value = cityLabel(CITY[state[key]]); root.dataset.flag = cityFlag(CITY[state[key]]); };
+  const optHtml = (c, i) => `<div class="opt ${i === active ? 'active' : ''}" data-i="${i}" role="option">
+      <span class="flag">${cityFlag(c)}</span><span class="opt-main">${esc(c.name)}</span><span class="opt-sub">${esc(citySub(c))}</span></div>`;
   function render() {
-    list.innerHTML = items.length ? items.map((c, i) => `<div class="opt ${i === active ? 'active' : ''}" data-id="${c.id}" role="option">
-      <span class="flag">${cityFlag(c)}</span><span class="opt-main">${esc(c.name)}</span><span class="opt-sub">${esc(citySub(c))}</span></div>`).join('')
-      : '<div class="opt empty">Sin resultados. Prueba con otra ciudad o país.</div>';
-    const el = list.children[active]; if (el && el.scrollIntoView) el.scrollIntoView({ block: 'nearest' });
+    const nLocal = items.length - remote.length;
+    let html = items.slice(0, nLocal).map(optHtml).join('');
+    if (lastQ.length >= 3) {
+      html += `<div class="opt-sep">🌍 Cualquier lugar del mundo ${searching ? '<span class="spin"></span>' : ''}</div>`;
+      html += remote.length ? remote.map((c, k) => optHtml(c, nLocal + k)).join('') : (searching ? '' : '<div class="opt empty">Sin coincidencias en el mapa mundial.</div>');
+    } else if (!items.length) html = '<div class="opt empty">Escribe al menos 3 letras para buscar cualquier pueblo, aldea, montaña o dirección del mundo.</div>';
+    if (!items.length && lastQ.length < 3) html += '';
+    list.innerHTML = html;
+    const el = list.querySelector('.opt.active'); if (el && el.scrollIntoView) el.scrollIntoView({ block: 'nearest' });
+  }
+  function remoteSearch(q) {
+    clearTimeout(tmr); if (ctrl) ctrl.abort();
+    remote = []; searching = q.length >= 3;
+    if (!searching) return;
+    tmr = setTimeout(async () => {
+      ctrl = new AbortController();
+      try {
+        let r = await searchPlaces(q, ctrl.signal);
+        if (key === 'origin') r = r.filter(p => p.cc === 'ES');
+        const localIds = new Set(items.map(c => norm(c.name) + c.cc));
+        remote = r.filter(p => !localIds.has(norm(p.name) + p.cc)).slice(0, 10);
+      } catch (e) { if (e.name === 'AbortError') return; remote = []; }
+      searching = false;
+      items = items.filter(c => !c.geo || CITY[c.id] === c).concat(remote);
+      render();
+    }, 320);
   }
   function open(q) {
     const nq = norm(q.trim());
     items = getList().filter(c => !nq || norm(c.name).includes(nq) || norm(COUNTRIES[c.cc].n).includes(nq) || (c.prov && norm(PROVINCES[c.prov]).includes(nq)));
     items.sort((a, b) => (norm(a.name).startsWith(nq) ? 0 : 1) - (norm(b.name).startsWith(nq) ? 0 : 1));
-    items = items.slice(0, 60); active = 0; render(); root.classList.add('open');
+    items = items.slice(0, nq ? 20 : 60); active = 0; lastQ = q.trim();
+    remoteSearch(lastQ); render(); root.classList.add('open');
   }
-  function pick(id) { root.classList.remove('open'); setCity(key, id); input.blur(); }
+  function pick(c) { root.classList.remove('open'); setPlace(key, c); input.blur(); }
   input.addEventListener('focus', () => { input.select(); open(''); });
   input.addEventListener('input', () => open(input.value));
   input.addEventListener('keydown', e => {
     if (e.key === 'ArrowDown') { active = Math.min(items.length - 1, active + 1); render(); e.preventDefault(); }
     else if (e.key === 'ArrowUp') { active = Math.max(0, active - 1); render(); e.preventDefault(); }
-    else if (e.key === 'Enter') { if (items[active]) pick(items[active].id); e.preventDefault(); }
+    else if (e.key === 'Enter') { if (items[active]) pick(items[active]); e.preventDefault(); }
     else if (e.key === 'Escape') { root.classList.remove('open'); input.blur(); }
   });
   input.addEventListener('blur', () => setTimeout(() => { root.classList.remove('open'); show(); }, 150));
-  list.addEventListener('mousedown', e => { const o = e.target.closest('.opt[data-id]'); if (o) { e.preventDefault(); pick(o.dataset.id); } });
+  list.addEventListener('mousedown', e => { const o = e.target.closest('.opt[data-i]'); if (o) { e.preventDefault(); pick(items[+o.dataset.i]); } });
   show();
   return { show };
 }
 let comboO, comboD;
+function setPlace(key, p) {
+  if (p.geo) {
+    registerPlace(p);
+    state.places[p.id] = p;
+    const keep = new Set([state.origin, state.dest, p.id]);
+    const ids = Object.keys(state.places);
+    ids.slice(0, Math.max(0, ids.length - 25)).forEach(id => { if (!keep.has(id)) delete state.places[id]; });
+  }
+  setCity(key, p.id);
+}
 function setCity(key, id) {
   const wasDomestic = CITY[state.dest].cc === 'ES';
   state[key] = id;
@@ -244,13 +281,28 @@ function initMap() {
   // Al girar el móvil o redimensionar la ventana, recolocar la ruta
   let rzT;
   new ResizeObserver(() => { clearTimeout(rzT); rzT = setTimeout(() => { map.invalidateSize(); if (lastBounds) map.fitBounds(lastBounds, { maxZoom: 11, animate: false }); }, 120); }).observe($('#map'));
-  map.on('click', e => {
-    const pool = state.clickMode === 'origin' ? ES_CITIES : ALL_CITIES;
+  map.on('click', e => pickPoint(state.clickMode === 'origin' ? 'origin' : 'dest', e.latlng.lat, L.Util.wrapNum(e.latlng.lng, [-180, 180], true)));
+}
+async function pickPoint(key, lat, lng) {
+  const label = key === 'origin' ? 'Origen' : 'Destino';
+  toast('Buscando el lugar exacto…');
+  let p;
+  try { p = await reversePlace(lat, lng); }
+  catch (e) {
+    // Sin conexión: ciudad conocida más cercana
     let best = null, bd = Infinity;
-    pool.forEach(c => { const d = distKm({ lat: e.latlng.lat, lng: e.latlng.lng }, c); if (d < bd) { bd = d; best = c; } });
-    if (best && bd < 900) { setCity(state.clickMode === 'origin' ? 'origin' : 'dest', best.id); toast(`${state.clickMode === 'origin' ? 'Origen' : 'Destino'}: ${cityLabel(best)}`); }
-    else toast('No hay ninguna ciudad cerca de ese punto');
-  });
+    (key === 'origin' ? ES_CITIES : ALL_CITIES).forEach(c => { const d = distKm({ lat, lng }, c); if (d < bd) { bd = d; best = c; } });
+    toast(`Sin conexión: se usa la ciudad más cercana (${best.name})`); setCity(key, best.id); return;
+  }
+  if (key === 'origin' && p.cc !== 'ES') { toast(p.kind === 'sea' ? 'Ese punto está en el mar: el origen debe estar en España' : 'El origen debe estar en España (se admite en una oficina española)'); return; }
+  setPlace(key, p);
+  toast(`${label}: ${KIND_IC[p.kind] || '📍'} ${cityLabel(p)}`);
+}
+function useMyLocation(key) {
+  if (!navigator.geolocation) { toast('Tu dispositivo no permite la ubicación'); return; }
+  toast('Obteniendo tu ubicación…');
+  navigator.geolocation.getCurrentPosition(pos => pickPoint(key, pos.coords.latitude, pos.coords.longitude),
+    err => toast(err.code === 1 ? 'Permiso de ubicación denegado' : 'No se pudo obtener la ubicación'), { enableHighAccuracy: true, timeout: 12000 });
 }
 function setTiles() {
   if (tiles) map.removeLayer(tiles);
@@ -396,10 +448,11 @@ function recompute(forceFit) {
   saveState();
 }
 function renderMeta(ctx) {
-  const zoneTxt = ctx.domestic ? `Nacional · ${ZONE_LABEL_NAC[ctx.zone]}` : ZONE_LABEL_INT[ctx.zone];
+  const zoneTxt = ctx.d.kind === 'sea' ? 'Aguas abiertas · sin servicio postal' : ctx.domestic ? `Nacional · ${ZONE_LABEL_NAC[ctx.zone]}` : ZONE_LABEL_INT[ctx.zone];
   const tags = [];
   if (ctx.domestic) { if (ctx.customsDom) tags.push('<span class="tag warn">Aduana DUA</span>'); }
-  else tags.push(ctx.country.eu ? '<span class="tag ok">UE · sin aduanas</span>' : '<span class="tag warn">Fuera de la UE · aduanas</span>');
+  else if (ctx.d.kind !== 'sea') tags.push(ctx.country.eu ? '<span class="tag ok">UE · sin aduanas</span>' : '<span class="tag warn">Fuera de la UE · aduanas</span>');
+  if (ctx.d.geo && ctx.d.kind !== 'city') tags.push(`<span class="tag ${ctx.d.kind === 'sea' ? 'no' : 'warn'}">${KIND_IC[ctx.d.kind]} ${KIND_LABEL[ctx.d.kind]}</span>`);
   if (!ctx.domestic && ctx.country.suspended) tags.push('<span class="tag no">Servicio suspendido</span>');
   $('#routeMeta').innerHTML = `<div class="rm-line"><span>${cityFlag(ctx.o)} ${esc(ctx.o.name)}</span><span class="rm-arrow">→</span><span>${cityFlag(ctx.d)} ${esc(ctx.d.name)}</span></div>
     <div class="rm-sub">${zoneTxt} · ${fmtKm(ctx.distance)} en línea recta</div><div class="tagline">${tags.join('')}</div>`;
@@ -670,8 +723,10 @@ function init() {
     } else hint.textContent = '';
   });
   const quick = ['es-barcelona', 'es-las-palmas-de-gran-canaria', 'es-palma', 'pt-lisboa', 'fr-paris', 'de-berlin', 'gb-londres', 'us-nueva-york', 'mx-ciudad-de-mexico', 'ar-buenos-aires', 'jp-tokio', 'au-sidney'];
-  $('#quickDest').innerHTML = quick.map(id => `<button class="chip sm" data-q="${id}">${cityFlag(CITY[id])} ${esc(CITY[id].name)}</button>`).join('');
+  $('#quickDest').innerHTML = `<button class="chip sm loc" id="locDest">📍 Mi ubicación</button>` + quick.map(id => `<button class="chip sm" data-q="${id}">${cityFlag(CITY[id])} ${esc(CITY[id].name)}</button>`).join('');
   $$('#quickDest [data-q]').forEach(b => b.addEventListener('click', () => setCity('dest', b.dataset.q)));
+  $('#locDest').addEventListener('click', () => useMyLocation('dest'));
+  $('#locOrigin').addEventListener('click', () => useMyLocation('origin'));
   $$('#types button').forEach(b => b.addEventListener('click', () => { state.cat = b.dataset.cat; state.selected = null; renderSize(); renderOpts(); recompute(); }));
   $$('#tabs button').forEach(b => b.addEventListener('click', () => { state.tab = b.dataset.tab; recompute(); }));
   $$('.click-mode button').forEach(b => b.addEventListener('click', () => { state.clickMode = b.dataset.mode; $$('.click-mode button').forEach(x => x.classList.toggle('on', x === b)); }));

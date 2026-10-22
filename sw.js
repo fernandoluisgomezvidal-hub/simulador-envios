@@ -1,7 +1,7 @@
 /* Service worker: la app funciona sin conexión y se instala como aplicación. */
-const VERSION = 'v1';
+const VERSION = 'v5';
 const SHELL = `shell-${VERSION}`, CDN = `cdn-${VERSION}`, TILES = 'tiles-v1';
-const SHELL_FILES = ['./', 'index.html', 'styles.css', 'js/data.js', 'js/engine.js', 'js/app.js', 'manifest.webmanifest',
+const SHELL_FILES = ['./', 'index.html', 'styles.css?v=5', 'js/data.js?v=5', 'js/engine.js?v=5', 'js/places.js?v=5', 'js/app.js?v=5', 'manifest.webmanifest',
   'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png', 'icons/favicon-32.png'];
 const CDN_FILES = ['https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css',
   'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js'];
@@ -48,6 +48,9 @@ self.addEventListener('fetch', e => {
     return;
   }
 
+  // Búsqueda de lugares: siempre en directo
+  if (/photon\.komoot\.io|nominatim\.openstreetmap\.org/.test(url.hostname)) return;
+
   // Librerías y fuentes externas: caché primero
   if (url.origin !== location.origin) {
     e.respondWith((async () => {
@@ -64,11 +67,11 @@ self.addEventListener('fetch', e => {
   e.respondWith((async () => {
     const cache = await caches.open(SHELL);
     try {
-      const res = await fetch(req);
+      const res = await fetch(req, { cache: 'no-cache' });
       if (res.ok) cache.put(req, res.clone());
       return res;
     } catch (err) {
-      return (await cache.match(req, { ignoreSearch: true })) || (req.mode === 'navigate' ? cache.match('index.html') : Response.error());
+      return (await cache.match(req)) || (req.mode === 'navigate' ? cache.match('index.html') : Response.error());
     }
   })());
 });

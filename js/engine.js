@@ -60,7 +60,7 @@ function nationalZone(o, d) {
 function buildCtx(s) {
   const o = CITY[s.origin], d = CITY[s.dest];
   const domestic = d.cc === 'ES';
-  const country = COUNTRIES[d.cc];
+  const country = ensureCountry(d.cc, d);
   const ro = regionOf(o), rd = domestic ? regionOf(d) : null;
   const zone = domestic ? nationalZone(o, d) : country.z;
   let dims, g;
@@ -109,6 +109,12 @@ function buildRoute(svc, ctx) {
     if (last) legs.push({ mode: legMode, km: distKm(last, n) });
     nodes.push(n);
   };
+  function deliveryCenter(p, desc) {
+    const rural = ['village', 'remote', 'mountain'].includes(p.kind);
+    const off = rural ? 0.04 : 0.006;
+    return N('dc', (rural ? 'Unidad de reparto rural · ' : 'Unidad de reparto · ') + (p.near || p.name), p.lat - off, p.lng + off, 'delivery',
+      rural ? 'Cartero rural: reparto en ruta por la comarca' : desc);
+  }
   const ctaN = id => N('cta:' + id, CTAS[id].name, CTAS[id].lat, CTAS[id].lng, 'cta', 'Clasificación automatizada, lectura de código y consolidación por destino');
   const arrN = (a, key, desc) => N(key, a[0], a[1], a[2], a[3], desc);
   const descOf = t => t === 'airport' ? 'Consolidación en sacas y carga en bodega del avión' : 'Carga en contenedor y embarque en buque';
@@ -171,11 +177,12 @@ function buildRoute(svc, ctx) {
       }
     }
     const secondaryD = d.island && CTAS[dc].island && d.island !== CTAS[dc].island;
-    dcNode = N('dc', 'Unidad de reparto · ' + d.name, d.lat - 0.006, d.lng + 0.006, 'delivery', 'Preparación de la ruta del cartero');
+    dcNode = deliveryCenter(d, 'Preparación de la ruta del cartero');
     push(dcNode, secondaryD ? longMode(mode) : 'van');
   } else {
     const C = ctx.country;
-    const hub = N('hub', C.hub[0], C.hub[1], C.hub[2], ctx.customsIntl ? 'customs' : 'hub',
+    const H = C.hub || ['Sin centro postal (aguas internacionales)', d.lat + 0.5, d.lng + 0.5];
+    const hub = N('hub', H[0], H[1], H[2], ctx.customsIntl ? 'customs' : 'hub',
       ctx.customsIntl ? 'Llegada al país, control aduanero e impuestos de importación' : 'Recepción por el operador postal de destino y clasificación nacional');
     const ro = CTAS[cur].region;
     const exportDesc = ctx.customsIntl ? ' · Declaración de exportación (salida de la UE)' : '';
@@ -193,18 +200,20 @@ function buildRoute(svc, ctx) {
       const ex = EXCHANGE[useBCN ? 'BCN' : 'MAD'];
       const exch = N('exch', ex[0], ex[1], ex[2], 'airport', 'Oficina de cambio internacional: sacas por país de destino' + exportDesc);
       push(exch, 'van');
-      if (distKm(exch, hub) > 8500 && C.hub[2] > 40) push(N('transit', DOHA[0], DOHA[1], DOHA[2], 'transit', 'Transbordo a vuelo de conexión'), 'plane');
+      if (distKm(exch, hub) > 8500 && H[2] > 40) push(N('transit', DOHA[0], DOHA[1], DOHA[2], 'transit', 'Transbordo a vuelo de conexión'), 'plane');
       push(hub, 'plane');
     }
     const dh = distKm(hub, d);
-    dcNode = N('dc', 'Unidad de reparto · ' + d.name, d.lat - 0.006, d.lng + 0.006, 'delivery', 'Operador postal local: preparación del reparto');
+    dcNode = deliveryCenter(d, 'Operador postal local: preparación del reparto');
     push(dcNode, dh > 700 ? 'plane' : dh > 40 ? 'truck' : 'van');
   }
 
   // Último tramo
   const del = deliveryOf(svc, ctx);
   let end;
-  if (del === 'oficina') end = N('end', 'Oficina de destino · ' + d.name, d.lat + 0.006, d.lng - 0.006, 'office', 'El destinatario lo recoge con DNI o código de recogida (15 días)');
+  if (d.kind === 'mountain' || d.kind === 'remote' || d.kind === 'sea') end = N('end', (d.kind === 'sea' ? 'Sin reparto · ' : 'Punto de recogida más cercano · ') + (d.near || d.name), d.lat, d.lng, 'office',
+    d.kind === 'sea' ? 'No hay entrega postal en el mar' : 'Sin reparto a domicilio en este punto: el destinatario lo recoge en el punto/oficina más próximo');
+  else if (del === 'oficina') end = N('end', 'Oficina de destino · ' + d.name, d.lat + 0.006, d.lng - 0.006, 'office', 'El destinatario lo recoge con DNI o código de recogida (15 días)');
   else if (del === 'citypaq') end = N('end', 'Citypaq · ' + d.name, d.lat + 0.006, d.lng - 0.006, 'locker', 'Taquilla automática 24 h: recogida con el código recibido por SMS/email');
   else if (svc.cat !== 'paquete' && !svc.sign) end = N('end', 'Buzón del destinatario · ' + d.name, d.lat, d.lng, 'home', 'Depósito en el buzón domiciliario');
   else if (svc.id === 'paq_ligero' && ctx.sorted[2] <= 3) end = N('end', 'Buzón del destinatario · ' + d.name, d.lat, d.lng, 'home', 'Cabe por la ranura del buzón (≤ 3 cm): se entrega sin necesidad de estar en casa');
@@ -251,6 +260,9 @@ function daysFor(svc, ctx) {
   if (!r) return null;
   let [a, b] = r;
   if (ctx.customsDom) b += 1;
+  const k = ctx.d.kind;
+  if (k === 'village') b += 1;
+  if (k === 'remote' || k === 'mountain') { a += 1; b += ctx.domestic ? 2 : 4; }
   if (ctx.customsIntl) b += ctx.zone >= 5 ? 2 : 1;
   if (isPeak(ctx.shipDate)) { if (svc.scope === 'int') a += 1; b += 1; }
   return [a, b];
@@ -330,6 +342,12 @@ function evaluate(svc, ctx, route) {
   const reasons = [], warns = [];
   const L = svc.limits, c = ctx.country, S = ctx.sorted;
   if (!ctx.domestic && c.suspended) reasons.push(`Admisión suspendida actualmente con destino ${c.n}`);
+  if (ctx.d.kind === 'sea') reasons.push('El destino está en el mar: no existe reparto postal en aguas abiertas. Envíalo a la Lista de Correos de un puerto o al consignatario del barco.');
+  if (ctx.o.kind === 'sea') reasons.push('El origen está en el mar: hay que admitir el envío en una oficina en tierra.');
+  if (ctx.d.cc === 'AQ') reasons.push('Antártida: solo reciben correo algunas bases científicas con dirección postal propia (vía Argentina, Chile, Nueva Zelanda…).');
+  if (ctx.d.kind === 'mountain') warns.push('Montaña: no hay reparto en el punto exacto; el envío se entrega en la oficina o punto de recogida del municipio más cercano.');
+  else if (ctx.d.kind === 'remote') warns.push('Zona remota sin reparto a domicilio: el cartero rural lo deja en el punto de recogida más próximo o se recoge en oficina. Plazo ampliado.');
+  else if (ctx.d.kind === 'village') warns.push('Zona rural: reparto por cartero rural, normalmente con un día más de plazo.');
   if (!svc.days[ctx.zone] && !svc.today) reasons.push('No disponible para esta zona');
   if (svc.today) {
     if (ctx.o.id !== ctx.d.id) reasons.push('Solo para envíos dentro de la misma ciudad');

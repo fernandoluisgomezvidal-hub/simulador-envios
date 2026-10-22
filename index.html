@@ -20,7 +20,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
-  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="styles.css?v=5">
 </head>
 <body>
   <header class="topbar">
@@ -49,16 +49,16 @@
         <div class="od">
           <div class="field">
             <label for="inOrigin">Desde <small>(España)</small></label>
-            <div class="combo" id="comboOrigin"><span class="combo-pin a">A</span><input id="inOrigin" autocomplete="off" spellcheck="false" placeholder="Ciudad de origen"><div class="combo-list" role="listbox"></div></div>
+            <div class="combo" id="comboOrigin"><span class="combo-pin a">A</span><input id="inOrigin" autocomplete="off" spellcheck="false" placeholder="Pueblo, ciudad o dirección en España"><div class="combo-list" role="listbox"></div></div>
           </div>
           <button class="swap" id="btnSwap" title="Intercambiar origen y destino" aria-label="Intercambiar">⇅</button>
           <div class="field">
-            <label for="inDest">Hacia <small>(España o cualquier país)</small></label>
-            <div class="combo" id="comboDest"><span class="combo-pin b">B</span><input id="inDest" autocomplete="off" spellcheck="false" placeholder="Ciudad o país de destino"><div class="combo-list" role="listbox"></div></div>
+            <label for="inDest">Hacia <small>(cualquier lugar del mundo)</small></label>
+            <div class="combo" id="comboDest"><span class="combo-pin b">B</span><input id="inDest" autocomplete="off" spellcheck="false" placeholder="Cualquier lugar: ciudad, aldea, montaña…"><div class="combo-list" role="listbox"></div></div>
           </div>
         </div>
-        <div class="cp-row"><input id="cpOrigin" inputmode="numeric" maxlength="5" placeholder="Código postal de origen (opcional)" aria-label="Código postal de origen"><span id="cpHint" class="hint"></span></div>
-        <div class="quick-l">Destinos rápidos</div>
+        <div class="cp-row"><button class="chip sm loc" id="locOrigin" title="Usar mi ubicación como origen">📍</button><input id="cpOrigin" inputmode="numeric" maxlength="5" placeholder="Código postal de origen (opcional)" aria-label="Código postal de origen"><span id="cpHint" class="hint"></span></div>
+        <div class="quick-l">Destinos rápidos · o toca cualquier punto del mapa</div>
         <div class="chips" id="quickDest"></div>
         <div class="route-meta" id="routeMeta"></div>
       </section>
@@ -153,8 +153,9 @@
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
-  <script src="js/data.js"></script>
-  <script src="js/engine.js"></script>
-  <script src="js/app.js"></script>
+  <script src="js/data.js?v=5"></script>
+  <script src="js/engine.js?v=5"></script>
+  <script src="js/places.js?v=5"></script>
+  <script src="js/app.js?v=5"></script>
 </body>
 </html>
