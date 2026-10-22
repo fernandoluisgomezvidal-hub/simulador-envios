@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#161d28" media="(prefers-color-scheme: dark)">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="Envíos">
+  <meta name="application-name" content="Envíos">
+  <meta name="format-detection" content="telephone=no">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <title>Simulador de Envíos</title>
+  <meta name="description" content="Simula plazos, rutas, precios y aduanas de cartas, postales y paquetes desde España a todo el mundo.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <div class="logo" aria-hidden="true">
+        <svg viewBox="0 0 24 24" width="22" height="22"><rect x="3" y="5" width="18" height="14" rx="2.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="m4 7 8 6 8-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
+      </div>
+      <div>
+        <h1>Simulador de Envíos</h1>
+        <p>Plazos, rutas, precios y aduanas desde España a todo el mundo</p>
+      </div>
+    </div>
+    <div class="top-actions">
+      <span class="pill" title="Tarifas y plazos orientativos. No es una herramienta oficial.">Simulación no oficial</span>
+      <button class="btn primary" id="btnInstall" hidden title="Instalar como aplicación">⬇️ <span class="hide-sm">Instalar app</span></button>
+      <button class="btn ghost" id="btnShare" title="Copiar enlace con esta simulación">🔗 <span class="hide-sm">Compartir</span></button>
+      <button class="btn ghost" id="btnPrint" title="Imprimir resumen">🖨️ <span class="hide-sm">Imprimir</span></button>
+      <button class="btn ghost icon" id="btnTheme" aria-label="Cambiar tema claro/oscuro">◐</button>
+    </div>
+  </header>
+
+  <main class="layout">
+    <aside class="panel" id="panel">
+      <section class="step">
+        <div class="step-h"><span class="num">1</span><h2>Origen y destino</h2></div>
+        <div class="od">
+          <div class="field">
+            <label for="inOrigin">Desde <small>(España)</small></label>
+            <div class="combo" id="comboOrigin"><span class="combo-pin a">A</span><input id="inOrigin" autocomplete="off" spellcheck="false" placeholder="Ciudad de origen"><div class="combo-list" role="listbox"></div></div>
+          </div>
+          <button class="swap" id="btnSwap" title="Intercambiar origen y destino" aria-label="Intercambiar">⇅</button>
+          <div class="field">
+            <label for="inDest">Hacia <small>(España o cualquier país)</small></label>
+            <div class="combo" id="comboDest"><span class="combo-pin b">B</span><input id="inDest" autocomplete="off" spellcheck="false" placeholder="Ciudad o país de destino"><div class="combo-list" role="listbox"></div></div>
+          </div>
+        </div>
+        <div class="cp-row"><input id="cpOrigin" inputmode="numeric" maxlength="5" placeholder="Código postal de origen (opcional)" aria-label="Código postal de origen"><span id="cpHint" class="hint"></span></div>
+        <div class="quick-l">Destinos rápidos</div>
+        <div class="chips" id="quickDest"></div>
+        <div class="route-meta" id="routeMeta"></div>
+      </section>
+
+      <section class="step">
+        <div class="step-h"><span class="num">2</span><h2>¿Qué envías?</h2></div>
+        <div class="types" id="types">
+          <button data-cat="carta"><span class="t-ic">✉️</span><b>Carta</b><small>Sobres y documentos hasta 2 kg</small></button>
+          <button data-cat="postal"><span class="t-ic">🖼️</span><b>Postal</b><small>Tarjeta postal</small></button>
+          <button data-cat="paquete"><span class="t-ic">📦</span><b>Paquete</b><small>Mercancía hasta 30 kg</small></button>
+        </div>
+      </section>
+
+      <section class="step">
+        <div class="step-h"><span class="num">3</span><h2>Medidas y peso</h2></div>
+        <div id="sizeBlock"></div>
+      </section>
+
+      <section class="step">
+        <div class="step-h"><span class="num">4</span><h2>Contenido y opciones</h2></div>
+        <div id="optsBlock"></div>
+      </section>
+
+      <section class="step" id="whenBlock">
+        <div class="step-h"><span class="num">5</span><h2>¿Cuándo lo envías?</h2><button class="link" id="btnNow">Ahora</button></div>
+        <div class="grid2">
+          <div class="field"><label for="inDate">Fecha</label><input type="date" id="inDate" data-bind="date"></div>
+          <div class="field"><label for="inTime">Hora de entrega en oficina</label><input type="time" id="inTime" data-bind="time"></div>
+        </div>
+        <div id="dateHint" class="hint"></div>
+        <div class="field">
+          <label>¿Qué priorizas al recomendar?</label>
+          <div class="prio"><span>💶 Precio</span><input type="range" min="0" max="100" data-bind="priority" aria-label="Prioridad precio o rapidez"><span>⚡ Rapidez</span></div>
+        </div>
+      </section>
+    </aside>
+
+    <section class="content">
+      <div id="hero" class="card hero"></div>
+
+      <div class="card map-card" id="mapCard">
+        <div class="map-wrap">
+          <div id="map" aria-label="Mapa de la ruta"></div>
+          <div class="map-over top">
+            <div class="click-mode" title="Haz clic en el mapa para elegir la ciudad más cercana">
+              <span>Clic en el mapa:</span><button data-mode="origin">Origen</button><button data-mode="dest">Destino</button>
+            </div>
+          </div>
+          <div class="map-over legend">
+            <span><i class="lg van"></i>Furgoneta</span><span><i class="lg truck"></i>Camión</span><span><i class="lg plane"></i>Avión</span><span><i class="lg ship"></i>Barco</span>
+          </div>
+        </div>
+        <div class="player">
+          <button id="btnPlay" class="btn primary">▶ Simular viaje</button>
+          <input type="range" id="animRange" min="0" max="1000" value="0" aria-label="Progreso del viaje">
+          <select id="animSpeed" aria-label="Velocidad"><option value="30000">Lento</option><option value="16000" selected>Normal</option><option value="7000">Rápido</option></select>
+          <div id="animStatus" class="anim-status"></div>
+        </div>
+      </div>
+
+      <nav class="tabs" id="tabs" role="tablist">
+        <button data-tab="servicios">📋 Servicios</button>
+        <button data-tab="ruta">🗺️ Ruta paso a paso</button>
+        <button data-tab="seguimiento">📍 Seguimiento</button>
+        <button data-tab="coste">💶 Coste</button>
+        <button data-tab="aduanas">🛃 Aduanas y normas</button>
+        <button data-tab="zonas">🌍 Zonas y plazos</button>
+      </nav>
+      <div id="tabBody" class="card tab-body"></div>
+    </section>
+  </main>
+
+  <footer class="foot">
+    Simulación educativa con tarifas, plazos y rutas <b>orientativos</b> inspirados en los servicios postales públicos de España. No es una herramienta oficial ni está vinculada a ningún operador:
+    consulta siempre las condiciones vigentes antes de enviar.
+  </footer>
+  <nav class="bottom-nav" id="bottomNav" aria-label="Secciones">
+    <button data-go="panel" class="on"><span>📝</span>Envío</button>
+    <button data-go="hero"><span>📅</span>Resultado</button>
+    <button data-go="mapCard"><span>🗺️</span>Mapa</button>
+    <button data-go="tabs"><span>📋</span>Detalles</button>
+  </nav>
+
+  <div class="sheet-bg" id="installSheet" hidden>
+    <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="installTitle">
+      <img src="icons/icon-192.png" alt="" width="64" height="64">
+      <h3 id="installTitle">Instala «Envíos» como aplicación</h3>
+      <div id="installSteps"></div>
+      <button class="btn primary" id="installClose">Entendido</button>
+    </div>
+  </div>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+  <script src="js/data.js"></script>
+  <script src="js/engine.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
